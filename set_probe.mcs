@@ -1,0 +1,60 @@
+' set_probe
+
+Sub Main () 
+
+Dim phi As Double, hight As Double, d As Double
+Dim probe_name_t As String, probe_name_p As String
+
+Dim phi_step As Double
+Dim hight_start As Double, hight_stop As Double, hight_step As Double
+
+phi_step = 45
+hight_start = 0
+hight_stop = 1000
+hight_step = 500
+d = 1000
+
+With Probe
+	.Reset
+	.AutoLabel False
+	.Field "EFarfield"
+	.SetCoordinateSystemType "Spherical"
+	.Origin "bbox"
+End With
+
+phi = 0
+Do While phi < 360
+
+	hight = hight_start
+	Do While hight <= hight_stop
+
+		probe_name_p = "Eph(" & Format(phi, "000") & " - " & Format(hight, "+0000;-0000") & ")"
+		probe_name_t = "Eth(" & Format(phi, "000") & " - " & Format(hight, "+0000;-0000") & ")"
+
+		With Probe
+'			.Reset
+'			.AutoLabel False
+'			.Field "EFarfield"
+			.SetPosition1 90 - atn2(hight, d)*180/pi()
+			.SetPosition2 phi
+			.SetPosition3 Sqr(d^2 + hight^2)
+'			.SetCoordinateSystemType "Spherical"
+
+			.Caption probe_name_p
+			.Orientation "Phi"
+			.Create
+
+			.Caption probe_name_t
+			.Orientation "Theta"
+			.Create
+		End With
+
+		hight = hight + hight_step
+
+	Loop
+
+	phi = phi + phi_step
+
+Loop
+
+End Sub
