@@ -1,0 +1,274 @@
+Option Explicit
+
+'#include "vba_globals_all.lib"
+'#include "vba_globals_3d.lib"
+
+' -----------------------------------------------------------------------------------------
+' 19-May-2015 ctc: change extraction method (Access Results with ResultTree function
+' 05-Dec-2014 ctc: option to choose probe to extract; complex value
+' 14-Nov-2014 ctc: converted from macro to result template
+' 30-May-2014 ctc: first version
+' -----------------------------------------------------------------------------------------
+Dim ProbeName As String
+Dim sFile As String
+Dim FieldComplex As Object
+Dim ReComplex As Object
+Dim ImComplex As Object
+Dim ExcitationString As String
+Dim UserInputString As String
+Dim ExcitationPort As Double
+Dim FieldType As Double
+Dim ProbeType As String
+Dim TempReal(30001) As Double
+Dim PeakReal(30001) As Double
+Dim TempImag(30001) As Double
+Dim PeakImag(30001) As Double
+Dim TempAmp(30001) As Double
+Dim PeakAmp(30001) As Double
+Dim Freq(30001) As Double
+Dim nData As Double
+Dim n As Double
+Dim FirstEntry As Boolean
+Dim Label As String
+
+
+Function Define(sName As String, bCreate As Boolean, bNameChanged As Boolean) As Boolean
+
+	Begin Dialog UserDialog 320,273,"Specify Probes / Excitations",.DialogFunc ' %GRID:10,7,1,1
+		GroupBox 40,21,240,91,"Components for Extraction",.GroupBox1
+		OptionGroup .Group1
+			OptionButton 70,42,150,14,"Include All Probes",.OptionButton1
+			OptionButton 70,63,180,14,"Specify Excitation String",.OptionButton2
+		GroupBox 40,126,240,105,"Probe Group",.GroupBox2
+		OptionGroup .Group2
+			OptionButton 70,140,120,14,"E-field",.OptionButton3
+			OptionButton 70,161,130,14,"H-field",.OptionButton4
+			OptionButton 70,182,130,14,"E-field (farfield)",.OptionButton5
+			OptionButton 70,203,130,14,"H-field (farfield)",.OptionButton6
+		TextBox 90,84,90,21,.Exc
+		OKButton 70,245,90,21
+		CancelButton 170,245,90,21
+	End Dialog
+	Dim dlg As UserDialog
+
+	dlg.Group1 = CInt(GetScriptSetting("Group1", "1"))
+	dlg.Exc = GetScriptSetting("Exc", "(Abs) [AC1]")
+	dlg.Group2 = CInt(GetScriptSetting("Group2", "2"))
+
+	' Show the dialog box
+
+	If (Not Dialog(dlg)) Then
+
+		' The user left the dialog box without pressing Ok. Assigning False to the function
+		' will cause the framework to cancel the creation or modification without storing
+		' anything.
+
+		Define = False
+	Else
+
+		' The user properly left the dialog box by pressing Ok. Assigning True to the function
+		' will cause the framework to complete the creation or modification and store the corresponding
+		' settings.
+
+		Define = True
+
+		' Convert the dialog data into strings in order to store them in the script settings database.
+		' Determine a proper name for the result item. Changing the name will cause the framework to use
+		' the modified name for the result item.
+
+		If (Not bNameChanged) Then
+
+
+			Select Case dlg.Group2
+				Case 0
+					If dlg.Group1 = 0 Then
+						sName = "Peak E-field Probes (All)"
+					Else
+						sName = "Peak E-field Probes " + dlg.Exc
+					End If
+				Case 1
+					If dlg.Group1 = 0 Then
+						sName = "Peak H-field Probes (All)"
+					Else
+						sName = "Peak H-field Probes " + dlg.Exc
+					End If
+				Case 2
+					If dlg.Group1 = 0 Then
+						sName = "Peak E-field (far) Probes (All)"
+					Else
+						sName = "Peak E-field (far) Probes " + dlg.Exc
+					End If
+				Case 3
+					If dlg.Group1 = 0 Then
+						sName = "Peak H-field (far) Probes (All)"
+					Else
+						sName = "Peak H-field (far) Probes " + dlg.Exc
+					End If
+			End Select
+
+		End If
+
+		' Store the script settings into the database for later reuse by either the define function (for modifications)
+		' or the evaluate function.
+
+		StoreScriptSetting("Group1", CStr(dlg.Group1))
+		StoreScriptSetting("Exc", CStr(dlg.Exc))
+		StoreScriptSetting("Group2", CStr(dlg.Group2))
+		StoreTemplateSetting("TemplateType","1DC")
+
+	End If
+
+End Function
+Function Evaluate1DComplex() As Object
+
+	Set Evaluate1DComplex = Result1DComplex("")
+
+	ExcitationPort = CInt(GetScriptSetting("Group1", "0"))
+	FieldType = CInt(GetScriptSetting("Group2", "1"))
+	UserInputString = GetScriptSetting("Exc", "2")
+
+	If FieldType = 0 Then
+		ProbeType = "E-Field"
+		Label = "E-field (V/m)"
+	ElseIf FieldType = 1 Then
+		ProbeType = "H-Field"
+		Label = "H-field (H/m)"
+	ElseIf FieldType = 2 Then
+		ProbeType = "E-Farfield"
+		Label = "E-Farfield (V/m)"
+	ElseIf FieldType = 3 Then
+		ProbeType = "H-Farfield"
+		Label = "H-Farfield (H/m)"
+	End If
+
+	'Access to Probe Results
+	ProbeName = Resulttree.GetFirstChildName ("1D Results\Probes\" + ProbeType) 'signal folder will appear in the list first
+	If ProbeName = "" Then
+		MsgBox "No Probe Results Found!!"
+		Exit All
+	End If
+
+	FirstEntry = True
+	ProbeName = Resulttree.GetNextItemName (ProbeName) 'access to first field results
+
+	While ProbeName <> ""
+		If ExcitationPort = 1 Then 'Check Result Extraction Options - 0 -> All, 1 -> Specific Excitation String
+				'Option 1 --> Only Extract Certain Excitation String
+				ExcitationString = Right(ProbeName, Len(UserInputString))
+				If ExcitationString = UserInputString Then
+					Extraction
+				End If
+		Else
+				'Option 0 -> Extract All Results
+				Extraction
+		End If
+
+		ProbeName = Resulttree.GetNextItemName (ProbeName)
+	Wend
+
+	'Saving Results
+	Dim PeakFieldComplex As Object
+	Set PeakFieldComplex = Result1DComplex("")
+
+		For n = 0 To nData-1
+			Evaluate1DComplex.AppendXY Freq(n), PeakReal(n), PeakImag(n)
+		Next
+
+		With Evaluate1DComplex
+			.Xlabel "Frequency (" + Units.GetFrequencyUnit + ")"
+			.Ylabel "Field"
+		End With
+
+
+
+End Function
+
+Sub Main2
+
+' -------------------------------------------------------------------------------------------------
+' Main: This function serves as a main program for testing purposes.
+'       You need to rename this function to "Main" for debugging the result template.
+'
+'		PLEASE NOTE that a result template file must not contain a main program for
+'       proper execution by the framework. Therefore please ensure to rename this function
+'       to e.g. "Main2" before the result template can be used by the framework.
+' -------------------------------------------------------------------------------------------------
+
+	' Activate the StoreScriptSetting / GetScriptSetting functionality. Clear the data in order to
+	' provide well defined environment for testing.
+
+	ActivateScriptSettings True
+	ClearScriptSettings
+
+	' Now call the define method and check whether it is completed successfully
+
+	If (Define("test", True, False)) Then
+
+		' If the define method is executed properly, call the Evaluate1D method and plot the curve
+
+		Dim stmpfile As String
+		stmpfile = "Test1D_tmp.txt"
+
+		Dim r1d As Object
+		Set r1d = Evaluate1DComplex
+
+		r1d.Save stmpfile
+
+		r1d.AddToTree "1D Results\Test 1D"
+		SelectTreeItem "1D Results\Test 1D"
+
+	End If
+
+	' Deactivate the StoreScriptSetting / GetScriptSetting functionality.
+
+	ActivateScriptSettings False
+
+End Sub
+
+Public Sub Extraction()
+
+					Set FieldComplex = Result1DComplex(Resulttree.GetFileFromTreeItem(ProbeName))
+					Set ReComplex = FieldComplex.Real
+					Set ImComplex = FieldComplex.Imaginary
+
+					nData = FieldComplex.GetN
+
+					If FirstEntry = True Then 'store initial data into temp variable
+						For n = 0 To nData-1
+							PeakReal(n) = ReComplex.GetY(n)
+							PeakImag(n) = ImComplex.GetY(n)
+							Freq(n) = ReComplex.GetX(n)
+							PeakAmp(n) = Sqr(PeakReal(n)^2 + PeakImag(n)^2)
+						Next
+					Else
+						For n = 0 To nData-1
+							TempReal(n) = ReComplex.GetY(n)
+							TempImag(n) = ImComplex.GetY(n)
+							TempAmp(n) = Sqr(TempReal(n)^2 + TempImag(n)^2)
+							If TempAmp(n) > PeakAmp(n) Then
+								PeakAmp(n) = TempAmp(n)
+								PeakReal(n) = TempReal(n)
+								PeakImag(n) = TempImag(n)
+							End If
+						Next
+					End If
+
+					FirstEntry = False
+
+End Sub
+
+
+Rem See DialogFunc help topic for more information.
+Private Function DialogFunc(DlgItem$, Action%, SuppValue?) As Boolean
+	Select Case Action%
+	Case 1 ' Dialog box initialization
+	Case 2 ' Value changing or button pressed
+		Rem DialogFunc = True ' Prevent button press from closing the dialog box
+	Case 3 ' TextBox or ComboBox text changed
+	Case 4 ' Focus changed
+	Case 5 ' Idle
+		Rem Wait .1 : DialogFunc = True ' Continue getting idle actions
+	Case 6 ' Function key
+	End Select
+End Function
+
